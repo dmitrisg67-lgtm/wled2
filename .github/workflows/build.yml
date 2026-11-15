@@ -1,0 +1,76 @@
+name: Build WLED Garden firmware v4
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout this repository
+        uses: actions/checkout@v4
+
+      - name: Checkout exact WLED 16.0.1
+        uses: actions/checkout@v4
+        with:
+          repository: wled/WLED
+          ref: v16.0.1
+          path: WLED
+
+      - name: Install Garden Smooth Random source
+        run: |
+          cp usermods/user_fx/user_fx.cpp WLED/usermods/user_fx/user_fx.cpp
+          cp platformio_override.ini WLED/platformio_override.ini
+          python scripts/patch_wled.py
+
+      - name: Verify appended effect slot
+        run: |
+          EFFECT_ID="$(cat WLED/.garden_effect_id)"
+          MODE_COUNT="$(cat WLED/.garden_mode_count)"
+          echo "Garden effect ID: $EFFECT_ID"
+          echo "Patched MODE_COUNT: $MODE_COUNT"
+          grep -nE "^#define FX_MODE_GARDEN_SMOOTH_RANDOM ${EFFECT_ID}$" WLED/wled00/FX.h
+          grep -nE "^#define MODE_COUNT ${MODE_COUNT}$" WLED/wled00/FX.h
+          grep -nF "Garden Smooth Random" WLED/usermods/user_fx/user_fx.cpp
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install PlatformIO
+        run: python -m pip install --upgrade platformio
+
+      - name: Prepare WLED web assets
+        working-directory: WLED
+        run: npm install
+
+      - name: Build firmware
+        working-directory: WLED
+        run: pio run -e esp32dev_garden
+
+      - name: Locate and verify firmware
+        run: |
+          mkdir -p out
+          if [ -f WLED/build_output/firmware/esp32dev_garden.bin ]; then
+            cp WLED/build_output/firmware/esp32dev_garden.bin out/WLED_16.0.1_ESP32_GardenSmoothRandom_v4.bin
+          elif [ -f WLED/.pio/build/esp32dev_garden/firmware.bin ]; then
+            cp WLED/.pio/build/esp32dev_garden/firmware.bin out/WLED_16.0.1_ESP32_GardenSmoothRandom_v4.bin
+          else
+            find WLED -type f -name '*.bin' -print
+            echo "Firmware binary not found" >&2
+            exit 1
+          fi
+          strings out/WLED_16.0.1_ESP32_GardenSmoothRandom_v4.bin | grep -F "Garden Smooth Random"
+          sha256sum out/WLED_16.0.1_ESP32_GardenSmoothRandom_v4.bin
+
+      - name: Upload compiled BIN
+        uses: actions/upload-artifact@v4
+        with:
+          name: WLED-16.0.1-ESP32-GardenSmoothRandom-v4
+          path: out/WLED_16.0.1_ESP32_GardenSmoothRandom_v4.bin
